@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Mapa Etnográfico Sofisticado</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-sidebar-v2/css/leaflet-sidebar.min.css" />
+  <style>
+    /* Estilo geral da página */
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background-color: #0f2f2f;
+      color: #000000; /* Fonte mais forte e visível */
+    }
+
+    /* Estilo do mapa ocupando toda a tela */
+    #map {
+      height: 100vh;
+      width: 100%;
+      z-index: 0;
+    }
+
+    /* Estilo da barra lateral */
+    .leaflet-sidebar {
+      background-color: rgba(15, 47, 47, 0.95);
+      color: #ffffff;
+    }
+
+    /* Cabeçalho da barra lateral */
+    .leaflet-sidebar-header {
+      background-color: #004d40;
+      color: #ffffff;
+      padding: 10px;
+      font-size: 1.2em;
+    }
+
+    /* Lista de checkboxes */
+    .checkbox-list {
+      padding: 10px;
+    }
+
+    /* Cada item de checkbox */
+    .checkbox-list label {
+      display: block;
+      margin: 6px 0;
+      cursor: pointer;
+      color: #000000;
+    }
+
+    /* Checkbox visual */
+    .checkbox-list input[type="checkbox"] {
+      margin-right: 6px;
+    }
+
+    /* Botões da interface */
+    .checkbox-list button {
+      background-color: #004d40;
+      color: #ffffff;
+      border: none;
+      padding: 6px 12px;
+      margin-top: 10px;
+      cursor: pointer;
+      border-radius: 4px;
+    }
+
+    /* Estilo do conteúdo do popup */
+    .leaflet-popup-content {
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    /* Estilo dos botões de zoom */
+    .leaflet-control-zoom {
+      background-color: rgba(15, 47, 47, 0.8);
+    }
+
+    .leaflet-control-zoom a {
+      color: rgb(19, 16, 16);
+    }
+  </style>
+</head>
+<body>
+
+<!-- Mapa principal -->
+<div id="map"></div>
+
+<!-- Painel lateral com camadas e filtros -->
+<div id="sidebar" class="leaflet-sidebar collapsed">
+  <div class="leaflet-sidebar-tabs">
+    <ul role="tablist">
+      <li><a href="#home" role="tab"><i class="fa fa-layer-group"></i></a></li>
+    </ul>
+  </div>
+  <div class="leaflet-sidebar-content">
+    <div class="leaflet-sidebar-pane" id="home">
+      <h2 class="leaflet-sidebar-header">Camadas & Filtros</h2>
+      <div class="checkbox-list">
+        <strong>Camadas:</strong><br>
+        <!-- Checkboxes de camadas -->
+        <label><input type="checkbox" id="chkMatasDoJubim" checked onchange="toggleLayer('matasDoJubim')"> Matas do Jubim</label>
+        <label><input type="checkbox" id="chkAcai" checked onchange="toggleLayer('acai')"> Açaizais</label>
+        <label><input type="checkbox" id="chkLagos" checked onchange="toggleLayer('lagos')"> Lagos</label>
+        <label><input type="checkbox" id="chkMangal" checked onchange="toggleLayer('mangal')"> Mangal</label>
+        <label><input type="checkbox" id="chkPraias" checked onchange="toggleLayer('praias')"> Praias</label>
+        <label><input type="checkbox" id="chkDominio" checked onchange="toggleLayer('dominio')"> Domínio Terrestre</label>
+        <hr>
+        <strong>Filtros:</strong><br>
+        <!-- Checkboxes de filtros -->
+        <label><input type="checkbox" onchange="filtrar('atividades', 'Caça')"> Caça</label>
+        <label><input type="checkbox" onchange="filtrar('atividades', 'Frutas')"> Frutas</label>
+        <label><input type="checkbox" onchange="filtrar('epoca_uso', 'Inverno')"> Inverno</label>
+        <label><input type="checkbox" onchange="filtrar('epoca_uso', 'Ano todo')"> Ano todo</label>
+        <br><button onclick="resetar()">Mostrar Tudo</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Scripts do Leaflet e Lógica -->
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet-sidebar-v2/js/leaflet-sidebar.min.js"></script>
+<script>
+  // Inicialização do mapa com base de imagem de satélite
+  var map = L.map('map', {
+    center: [-0.82, -48.53],
+    zoom: 12,
+    layers: [
+      L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        attribution: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye'
+      })
+    ]
+  });
+
+  // Inicializar o painel lateral
+  var sidebar = L.control.sidebar({ container: 'sidebar' }).addTo(map);
+  sidebar.open('home');
+
+  // Armazena todas as features e camadas
+  var todasAsFeatures = [];
+  var camadas = {};
+
+  // Função para carregar GeoJSON e agrupar por subtipo
+  function carregarGeoJSON(nome, url, estilo, sublayerField = null) {
+    const camada = L.featureGroup();
+    camadas[nome] = camada;
+    fetch(url)
+      .then(res => res.json())
+      .then(data => {
+        const features = sublayerField ? groupBy(data.features, sublayerField) : { [nome]: data.features };
+        for (const grupo in features) {
+          const subLayer = L.geoJSON(features[grupo], {
+            onEachFeature: function (feature, layer) {
+              todasAsFeatures.push(layer);
+              layer.layerId = nome;
+              const p = feature.properties;
+              const obs = p.observacoes || [];
+              const popup = `<b>${p.Name || 'Área'}</b><br>` +
+                            `<b>Atividades:</b> ${p.atividades || '-'}<br>` +
+                            `<b>Atores:</b> ${p.atores || '-'}<br>` +
+                            `<b>Recursos:</b> ${p.recursos || '-'}<br>` +
+                            `<b>Época:</b> ${p.epoca_uso || '-'}<br>` +
+                            `<b>Obs:</b><ul>${Array.isArray(obs) ? obs.map(o => `<li>${o}</li>`).join('') : obs}</ul>`;
+              layer.bindPopup(popup);
+            },
+            style: estilo
+          });
+          subLayer.addTo(camada);
+        }
+        camada.addTo(map);
+      });
+  }
+
+  // Função para agrupar features por campo (ex: subtipo)
+  function groupBy(features, field) {
+    return features.reduce((acc, feat) => {
+      const key = feat.properties[field] || 'Outros';
+      acc[key] = acc[key] || [];
+      acc[key].push(feat);
+      return acc;
+    }, {});
+  }
+
+  // Carregamento das camadas
+  carregarGeoJSON('matasDoJubim', 'Matas do Jubim.geojson', { color: 'darkgreen', weight: 2 }, 'subtipo');
+  carregarGeoJSON('acai', 'Açaizais.geojson', { color: 'purple', weight: 2 });
+  carregarGeoJSON('lagos', 'Lagos.geojson', { color: 'blue', weight: 2 });
+  carregarGeoJSON('mangal', 'Mangal.geojson', { color: 'brown', weight: 2 });
+  carregarGeoJSON('praias', 'Praias.geojson', { color: 'orange', weight: 2 });
+  carregarGeoJSON('dominio', 'Dominio Terrestre.geojson', { color: 'gray', weight: 2 });
+
+  // Alterna visibilidade de camadas
+  function toggleLayer(layerId) {
+    const checkbox = document.getElementById('chk' + capitalizeId(layerId));
+    if (!camadas[layerId]) return;
+    if (checkbox.checked) {
+      camadas[layerId].addTo(map);
+    } else {
+      map.removeLayer(camadas[layerId]);
+    }
+  }
+
+  // Aplica filtro por campo/valor
+  function filtrar(campo, valor) {
+    todasAsFeatures.forEach(layer => {
+      const prop = layer.feature.properties[campo];
+      if (Array.isArray(prop) ? prop.includes(valor) : prop == valor) {
+        map.addLayer(layer);
+      } else {
+        map.removeLayer(layer);
+      }
+    });
+  }
+
+  // Reseta todos os filtros e ativa todas as camadas
+  function resetar() {
+    Object.values(camadas).forEach(camada => map.addLayer(camada));
+    document.querySelectorAll('.checkbox-list input[type=checkbox]').forEach(cb => cb.checked = false);
+    ['chkMatasDoJubim','chkAcai','chkLagos','chkMangal','chkPraias','chkDominio']
+      .forEach(id => document.getElementById(id).checked = true);
+  }
+
+  // Função para capitalizar IDs dos checkboxes
+  function capitalizeId(str) {
+    return str.charAt(0).toUpperCase() + str.slice(1);
+  }
+</script>
+</body>
+</html>
